@@ -315,6 +315,8 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  np->trace_mask = p->trace_mask;
+
   return pid;
 }
 
@@ -653,4 +655,25 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+/**
+ * @brief Count the processes in certain states
+ * 
+ * @param proc_state_mask If (1 << STATE) is set in this mask, the processor is counted
+ * @return uint64 
+ */
+uint64
+count_proc(uint64 proc_state_mask)
+{
+  struct proc *p;
+  uint64 num = 0;
+
+  for(p = proc; p < proc + NPROC; p++)
+  {
+    if((1 << (p->state)) & proc_state_mask) {
+      num++;
+    }
+  }
+  return num;
 }
