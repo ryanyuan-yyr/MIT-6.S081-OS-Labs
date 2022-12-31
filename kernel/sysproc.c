@@ -80,7 +80,36 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 va;
+  int npages;
+  char* mask_addr;
+
+  if(argaddr(0, &va) < 0)
+    return -1;
+  if(argint(1, &npages) < 0)
+    return -1;
+  if(argaddr(2, (uint64*)&mask_addr) < 0)
+    return -1;
+
+  va = PGROUNDDOWN(va);
+  
+  uint64 mask = 0;
+  pagetable_t pagetable = myproc()->pagetable;
+
+  for(uint64 a = va, i = 0; a < va + npages*PGSIZE; a += PGSIZE, i++){
+    pte_t *pte;
+    if((pte = walk(pagetable, a, 0)) == 0)
+      panic("sys_pgaccess: walk");
+    if((*pte & PTE_V) == 0)
+      panic("sys_pgaccess: not mapped");
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("sys_pgaccess: not a leaf");
+    if((*pte & PTE_A) != 0){
+      mask |= (1L << i);
+      *pte &= ~PTE_A;
+    }
+  }
+  copyout(pagetable, (uint64)mask_addr, (char*)&mask, sizeof(mask));
   return 0;
 }
 #endif
