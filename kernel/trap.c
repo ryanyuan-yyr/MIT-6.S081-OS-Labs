@@ -77,9 +77,62 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2){
+    if (p->timing_signal.nperiod == 0) {
+      yield();
+      goto ret;
+    }
+    if (p -> timing_signal.is_signaling) {
+      ++(p->timing_signal.passed_period);
+      yield();
+      goto ret;
+    }
+    if (++(p->timing_signal.passed_period) < p->timing_signal.nperiod) {
+      yield();
+      goto ret;
+    }
 
+    p->timing_signal.passed_period = 0;
+    p->timing_signal.is_signaling = 1;
+    p->full_context.epc = p->trapframe->epc;
+    p->full_context.ra = p->trapframe->ra;
+    p->full_context.sp = p->trapframe->sp;
+    p->full_context.gp = p->trapframe->gp;
+    p->full_context.tp = p->trapframe->tp;
+    p->full_context.t0 = p->trapframe->t0;
+    p->full_context.t1 = p->trapframe->t1;
+    p->full_context.t2 = p->trapframe->t2;
+    p->full_context.s0 = p->trapframe->s0;
+    p->full_context.s1 = p->trapframe->s1;
+    p->full_context.a0 = p->trapframe->a0;
+    p->full_context.a1 = p->trapframe->a1;
+    p->full_context.a2 = p->trapframe->a2;
+    p->full_context.a3 = p->trapframe->a3;
+    p->full_context.a4 = p->trapframe->a4;
+    p->full_context.a5 = p->trapframe->a5;
+    p->full_context.a6 = p->trapframe->a6;
+    p->full_context.a7 = p->trapframe->a7;
+    p->full_context.s2 = p->trapframe->s2;
+    p->full_context.s3 = p->trapframe->s3;
+    p->full_context.s4 = p->trapframe->s4;
+    p->full_context.s5 = p->trapframe->s5;
+    p->full_context.s6 = p->trapframe->s6;
+    p->full_context.s7 = p->trapframe->s7;
+    p->full_context.s8 = p->trapframe->s8;
+    p->full_context.s9 = p->trapframe->s9;
+    p->full_context.s10 = p->trapframe->s10;
+    p->full_context.s11 = p->trapframe->s11;
+    p->full_context.t3 = p->trapframe->t3;
+    p->full_context.t4 = p->trapframe->t4;
+    p->full_context.t5 = p->trapframe->t5;
+    p->full_context.t6 = p->trapframe->t6;
+    // memmove((void *)(&p->full_context.ra), (void *)(&p->trapframe->ra),
+    //         sizeof(p->full_context) - sizeof(p->full_context.epc));
+    p->trapframe->epc = (uint64)(p->timing_signal.handler);
+    yield();
+    goto ret;
+  }
+ret: 
   usertrapret();
 }
 
