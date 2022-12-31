@@ -121,7 +121,8 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
-  panicked = 1; // freeze uart output from other CPUs
+  backtrace();
+  panicked = 1;  // freeze uart output from other CPUs
   for(;;)
     ;
 }
@@ -132,3 +133,16 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void _print_returnaddr(void *p);
+
+void backtrace(void) {
+  void* frame_pointr = (void*)r_fp();
+  while ((uint64)frame_pointr % PGSIZE != 0)
+  {
+    _print_returnaddr(frame_pointr);
+    frame_pointr = *(void **)((char *)frame_pointr - 16);
+  }
+}
+
+void _print_returnaddr(void *p) { printf("%p\n", *(void**)((char*)p - 8)); }
