@@ -15,6 +15,7 @@ extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
 unsigned char rc[(PHYSTOP >> 12) + 1];
+struct spinlock rc_lock;
 
 struct run {
   struct run *next;
