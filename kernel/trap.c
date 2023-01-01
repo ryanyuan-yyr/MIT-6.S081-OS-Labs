@@ -13,6 +13,7 @@ extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
+void store_pgfault_handler();
 
 extern int devintr();
 
@@ -67,6 +68,8 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == STORE_PGFAULT || r_scause() == INSTR_PGFAULT || r_scause() == LOAD_PGFAULT) {
+    store_pgfault_handler();
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -81,6 +84,31 @@ usertrap(void)
     yield();
 
   usertrapret();
+}
+
+void
+store_pgfault_handler()
+{
+  uint64 va = r_stval();
+  struct proc *p = myproc();
+  switch (cow_pgfault(p->pagetable, va))
+  {
+  // success
+  case 0:
+    /* code */
+    break;
+  
+  // OOM
+  case -1:
+    printf("Out of memory when copying a COW page");
+    p->killed = 1;
+    break;
+
+  default:
+    printf("Unresolvable store page fault\n");
+    p->killed = 1;
+    break;
+  }
 }
 
 //

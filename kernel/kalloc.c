@@ -14,6 +14,8 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+unsigned char rc[(PHYSTOP >> 12) + 1];
+
 struct run {
   struct run *next;
 };
@@ -51,6 +53,10 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  if (*cow_refcount((uint64)pa) != 0){
+    printf("kfree: rc = %d", *cow_refcount((uint64)pa));
+    panic("kfree a mapped page");
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -78,5 +84,22 @@ kalloc(void)
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
-  return (void*)r;
+  *cow_refcount((uint64)r) = 0;
+  return (void *)r;
+}
+
+int cow_map(pte_t* pte_parent, pagetable_t child_pagetable, uint64 va) {
+  uint64 old_pte_parent = *pte_parent;
+  uint64 new_pte_parent = (old_pte_parent & ~PTE_W) | PTE_COW | PTE_R | PTE_X;
+  uint64 flags = PTE_FLAGS(new_pte_parent);
+  uint64 pa = PTE2PA(new_pte_parent);
+  if(mappages(child_pagetable, va, PGSIZE, pa, flags) != 0) {
+    return -1;
+  }
+  *pte_parent = new_pte_parent;
+  return 0;
+}
+
+unsigned char* cow_refcount(uint64 pa) {
+  return &rc[pa >> 12];
 }

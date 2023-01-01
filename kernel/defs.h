@@ -63,6 +63,9 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int             cow_map(pte_t* pte_parent, pagetable_t child_pagetable, uint64 va);
+int             cow_pgfault(pagetable_t pgtbl, uint64 va);
+unsigned char*  cow_refcount(uint64 pa);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -80,6 +83,7 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+void            backtrace(void);
 
 // proc.c
 int             cpuid(void);

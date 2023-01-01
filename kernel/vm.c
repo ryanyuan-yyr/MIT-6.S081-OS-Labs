@@ -15,6 +15,8 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern unsigned char rc[];
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -151,6 +153,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if(*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
+    (*cow_refcount(pa))++;
     if(a == last)
       break;
     a += PGSIZE;
@@ -178,8 +181,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
+    
+    uint64 pa = PTE2PA(*pte);
+    (*cow_refcount(pa))--;
+    if (do_free && *cow_refcount(pa) == 0) {
       kfree((void*)pa);
     }
     *pte = 0;
@@ -301,22 +306,14 @@ int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
+  uint64 i;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if (cow_map(pte, new, i) != 0) {
       goto err;
     }
   }
@@ -350,7 +347,18 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+
+    pte_t* pte = walk(pagetable, va0, 0);
+    if (pte == 0) return -1;
+    if ((*pte & PTE_V) == 0) return -1;
+    if ((*pte & PTE_U) == 0) return -1;
+    if ((*pte & PTE_COW) != 0) {
+      if (cow_pgfault(pagetable, va0) != 0) return -1;
+      pte = walk(pagetable, va0, 0);
+      if (pte == 0) return -1;
+    }
+    pa0 = PTE2PA(*pte);
+
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
@@ -431,4 +439,35 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int cow_pgfault(pagetable_t pgtbl, uint64 va){
+  if (va >= MAXVA) return -2;
+  pte_t *pte = walk(pgtbl, va, 0);
+  if (!pte) {
+    return -2;
+  }
+  if ((*pte & PTE_COW) == 0) {
+    return -2;
+  }
+
+  uint64 pa = PTE2PA(*pte);
+  if (*cow_refcount(pa) == 0)
+    panic("cow_pgfault");
+  if (*cow_refcount(pa) == 1) {
+    *pte |= PTE_W;
+    *pte &= ~PTE_COW;
+    return 0;
+  }
+  uint64 mem = (uint64)kalloc();
+  if (mem == 0) {
+    return -1;
+  }
+  memmove((char *)mem, (char *)pa, PGSIZE);
+  uint64 old_flags = PTE_FLAGS(*pte);
+  uint64 new_flags = (old_flags | PTE_W) & ~PTE_COW;
+  uvmunmap(pgtbl, PGROUNDDOWN(va), 1, 0);
+  if (mappages(pgtbl, PGROUNDDOWN(va), PGSIZE, mem, new_flags) != 0)
+    return -2;
+  return 0;
 }
