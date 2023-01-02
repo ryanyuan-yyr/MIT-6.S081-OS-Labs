@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <assert.h>
+#define __USE_UNIX98
 #include <pthread.h>
 #include <sys/time.h>
 
@@ -14,6 +15,7 @@ struct entry {
   struct entry *next;
 };
 struct entry *table[NBUCKET];
+pthread_rwlock_t locks[NBUCKET];
 int keys[NKEYS];
 int nthread = 1;
 
@@ -43,6 +45,7 @@ void put(int key, int value)
 
   // is the key already present?
   struct entry *e = 0;
+  pthread_rwlock_wrlock(&locks[i]);
   for (e = table[i]; e != 0; e = e->next) {
     if (e->key == key)
       break;
@@ -54,7 +57,7 @@ void put(int key, int value)
     // the new is new.
     insert(key, value, &table[i], table[i]);
   }
-
+  pthread_rwlock_unlock(&locks[i]);
 }
 
 static struct entry*
@@ -64,10 +67,11 @@ get(int key)
 
 
   struct entry *e = 0;
+  pthread_rwlock_rdlock(&locks[i]);
   for (e = table[i]; e != 0; e = e->next) {
     if (e->key == key) break;
   }
-
+  pthread_rwlock_unlock(&locks[i]);
   return e;
 }
 
@@ -116,6 +120,11 @@ main(int argc, char *argv[])
   assert(NKEYS % nthread == 0);
   for (int i = 0; i < NKEYS; i++) {
     keys[i] = random();
+  }
+
+  for (int i = 0; i < NBUCKET; i++)
+  {
+    pthread_rwlock_init(locks + i, NULL);
   }
 
   //
