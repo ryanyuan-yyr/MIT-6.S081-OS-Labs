@@ -102,7 +102,27 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
-  
+  acquire(&e1000_lock);
+  uint32 tx_desc_tail = regs[E1000_TDT];
+  struct tx_desc* next_tx_desc = tx_ring + tx_desc_tail;
+  if ((next_tx_desc->status & E1000_TXD_STAT_DD) == 0) {
+    release(&e1000_lock);
+    return -1;
+  }
+  if (tx_mbufs[tx_desc_tail]) {
+    mbuffree(tx_mbufs[tx_desc_tail]);
+    tx_mbufs[tx_desc_tail] = 0;
+  }
+
+  next_tx_desc->addr = (uint64)(m->head);
+  next_tx_desc->length = m->len;
+  next_tx_desc->cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
+  next_tx_desc->status = 0;
+  tx_mbufs[tx_desc_tail] = m;
+
+  regs[E1000_TDT] = (tx_desc_tail + 1) % TX_RING_SIZE;
+  release(&e1000_lock);
+
   return 0;
 }
 
@@ -115,7 +135,66 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+  // acquire(&e1000_lock);
+  uint32 rx_desc_tail = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  struct rx_desc *next_rx_desc = rx_ring + rx_desc_tail;
+  if ((next_rx_desc->status & E1000_RXD_STAT_DD) == 0) {
+    // release(&e1000_lock);
+    return;
+  }
+
+  while (next_rx_desc->status & E1000_RXD_STAT_DD) {
+    acquire(&e1000_lock);
+    struct mbuf *buf = rx_mbufs[rx_desc_tail];
+    mbufput(buf, next_rx_desc->length);
+    rx_mbufs[rx_desc_tail] = mbufalloc(0);
+    next_rx_desc->addr = (uint64)rx_mbufs[rx_desc_tail]->head;
+    next_rx_desc->status = 0;
+    regs[E1000_RDT] = rx_desc_tail;
+    __sync_synchronize();
+    release(&e1000_lock);
+    net_rx(buf);
+    rx_desc_tail = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    next_rx_desc = rx_ring + rx_desc_tail;
+  }
 }
+
+// static void
+// e1000_recv(void)
+// {
+//   //
+//   // Your code here.
+//   //
+//   // Check for packets that have arrived from the e1000
+//   // Create and deliver an mbuf for each packet (using net_rx()).
+//   //
+  
+//   // 获取接收 packet 的位置
+//   uint64 rdt = regs[E1000_RDT];
+//   uint64 index = (rdt + 1) % RX_RING_SIZE; 
+//   // struct rx_desc recv_desc = rx_ring[index];
+//   if(!(rx_ring[index].status & E1000_RXD_STAT_DD)){
+//     // 查看新的 packet 是否有 E1000_RXD_STAT_DD 标志，如果
+//     // 没有，则直接返回
+//     return;
+//   }
+//   while(rx_ring[index].status & E1000_RXD_STAT_DD){
+//     acquire(&e1000_lock);
+//     // 使用 mbufput 更新长度并将其交给 net_rx() 处理
+//     struct mbuf* buf = rx_mbufs[index];
+//     mbufput(buf, rx_ring[index].length);
+//     // 分配新的 mbuf 并将其写入到描述符中并将状态吗设置成 0
+//     rx_mbufs[index] = mbufalloc(0);
+//     rx_ring[index].addr = (uint64)rx_mbufs[index]->head;
+//     rx_ring[index].status = 0;
+//     rdt = index;
+//     regs[E1000_RDT] = rdt;
+//     __sync_synchronize();
+//     release(&e1000_lock);
+//     net_rx(buf);
+//     index = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+//   }
+// }
 
 void
 e1000_intr(void)
