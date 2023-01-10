@@ -297,6 +297,8 @@ sys_open(void)
 
   begin_op();
 
+  int depth_thresh = 10;
+
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
@@ -304,6 +306,7 @@ sys_open(void)
       return -1;
     }
   } else {
+  restart:
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
@@ -313,6 +316,21 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+    if (!(omode & O_NOFOLLOW) && ip->type == T_SYMLINK) {
+      if (depth_thresh < 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      if (readi(ip, 0, (uint64)path, 0, MAXPATH) < 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      depth_thresh--;
+      goto restart;
     }
   }
 
@@ -349,6 +367,34 @@ sys_open(void)
   end_op();
 
   return fd;
+}
+
+uint64
+sys_symlink(void) {
+  char target[MAXPATH], path[MAXPATH];
+  if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
+    return -1;
+  }
+
+  int depth_thresh = 10;
+  begin_op();
+  if (depth_thresh < 0) {
+    end_op();
+    return -1;
+  }
+  struct inode *isym = create(path, T_SYMLINK, 0, 0);
+  if (!isym) {
+    end_op();
+    return -1;
+  }
+  if (writei(isym, 0, (uint64)target, 0, MAXPATH) < 0) {
+    iunlockput(isym);
+    end_op();
+    return -1;
+  }
+  iunlockput(isym);
+  end_op();
+  return 0;
 }
 
 uint64
