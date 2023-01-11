@@ -8,6 +8,15 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct mmap_area {
+  struct proc* p;
+  struct file* f;
+  uint64 file_start;
+  uint64 mapped_start;
+  uint64 len;
+  uint permission;
+  int flags;
+};
 
 // bio.c
 void            binit(void);
@@ -33,6 +42,8 @@ void            fileinit(void);
 int             fileread(struct file*, uint64, int n);
 int             filestat(struct file*, uint64 addr);
 int             filewrite(struct file*, uint64, int n);
+int             filewrite_inode(struct inode *ip, int user_src, uint64 addr, int n, uint* offset);
+int             fileread_inode(struct inode* ip, int user_dst, uint64 addr, int n, uint* offset);
 
 // fs.c
 void            fsinit(int);
@@ -104,6 +115,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+uint64          munmap(struct mmap_area *ma, uint64 addr, int len);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -170,6 +182,8 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+pte_t*          walk(pagetable_t pagetable, uint64 va, int alloc);
+int             mmap_trap_handler(uint64 va, struct proc *p);
 
 // plic.c
 void            plicinit(void);

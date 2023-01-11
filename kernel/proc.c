@@ -267,6 +267,8 @@ growproc(int n)
   return 0;
 }
 
+extern struct mmap_area mmap_areas[MAXMMAPN];
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
@@ -294,6 +296,24 @@ fork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+
+  // copy mmap regions
+  struct mmap_area *next_empty = mmap_areas;
+  struct mmap_area *parent_mmap;
+  for (parent_mmap = mmap_areas; parent_mmap != mmap_areas + MAXMMAPN;
+       parent_mmap++) {
+    if (parent_mmap->p != p) continue;
+    for (; next_empty != mmap_areas + MAXMMAPN && next_empty->p; next_empty++)
+      ;
+    if (next_empty == mmap_areas + MAXMMAPN) {
+      freeproc(np);
+      release(&np->lock);
+      return -1;
+    }
+    memmove((void *)next_empty, (void *)parent_mmap, sizeof(struct mmap_area));
+    next_empty->p = np;
+    filedup(next_empty->f);
+  }
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
@@ -333,6 +353,8 @@ reparent(struct proc *p)
   }
 }
 
+extern struct mmap_area mmap_areas[MAXMMAPN];
+
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait().
@@ -343,6 +365,14 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // unmap all mmaps
+  struct mmap_area *ma;
+  for (ma = mmap_areas; ma != mmap_areas + MAXMMAPN; ma++) {
+    if (ma->p == p) {
+      munmap(ma, ma->mapped_start, ma->len);
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

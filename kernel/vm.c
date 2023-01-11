@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -148,8 +153,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
+    if(*pte & PTE_V) {
       panic("mappages: remap");
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -431,4 +437,49 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+extern struct mmap_area mmap_areas[MAXMMAPN];
+
+int
+mmap_trap_handler(uint64 va, struct proc *p) {
+  struct mmap_area *ma;
+  for (ma = mmap_areas; ma != mmap_areas + MAXMMAPN; ma++) {
+    if (ma->p == p && va >= ma->mapped_start && va < ma->mapped_start + ma->len)
+      break;
+  }
+  if (ma == mmap_areas + MAXMMAPN)
+    return -1;
+  uint64 map_pg = PGROUNDDOWN(va);
+  void *pa = kalloc();
+  if(!pa) {
+    return -1;
+  }
+  uint offset = map_pg - ma->file_start;
+  int r = fileread_inode(ma->f->ip, 0, (uint64)pa, PGSIZE, &offset);
+  if (r < 0) {
+    kfree(pa);
+    return -1;
+  }
+  memset(pa + r, 0, PGSIZE - r);
+
+  int permission = PTE_U;
+  if (ma->permission & PROT_READ) {
+    permission |= PTE_R;
+  }
+  if (ma->permission & PROT_WRITE) {
+    permission |= PTE_W;
+  }
+  if (ma->permission & PROT_EXEC) {
+    permission |= PTE_X;
+  }
+  pte_t* pte = walk(p->pagetable, map_pg, 0);
+  if (*pte & PTE_V) {
+    return -1;
+  }
+  if (mappages(p->pagetable, map_pg, PGSIZE, (uint64)pa, permission) < 0) {
+    kfree(pa);
+    return -1;
+  }
+  return 0;
 }

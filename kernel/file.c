@@ -101,6 +101,16 @@ filestat(struct file *f, uint64 addr)
   return -1;
 }
 
+int
+fileread_inode(struct inode *ip, int user_dst, uint64 addr, int n, uint *offset) {
+  int r;
+  ilock(ip);
+  if ((r = readi(ip, user_dst, addr, *offset, n)) > 0)
+    *offset += r;
+  iunlock(ip);
+  return r;
+}
+
 // Read from file f.
 // addr is a user virtual address.
 int
@@ -118,10 +128,7 @@ fileread(struct file *f, uint64 addr, int n)
       return -1;
     r = devsw[f->major].read(1, addr, n);
   } else if(f->type == FD_INODE){
-    ilock(f->ip);
-    if((r = readi(f->ip, 1, addr, f->off, n)) > 0)
-      f->off += r;
-    iunlock(f->ip);
+    r = fileread_inode(f->ip, 1, addr, n, &f->off);
   } else {
     panic("fileread");
   }
@@ -129,12 +136,43 @@ fileread(struct file *f, uint64 addr, int n)
   return r;
 }
 
+int
+filewrite_inode(struct inode *ip, int user_src, uint64 addr, int n, uint* offset)
+{
+  // write a few blocks at a time to avoid exceeding
+  // the maximum log transaction size, including
+  // i-node, indirect block, allocation blocks,
+  // and 2 blocks of slop for non-aligned writes.
+  // this really belongs lower down, since writei()
+  // might be writing a device like the console.
+  int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+  int i = 0, r;
+  while (i < n) {
+    int n1 = n - i;
+    if (n1 > max) n1 = max;
+
+    begin_op();
+    ilock(ip);
+    if ((r = writei(ip, user_src, addr + i, *offset, n1)) > 0)
+      *offset += r;
+    iunlock(ip);
+    end_op();
+
+    if (r != n1) {
+      // error from writei
+      break;
+    }
+    i += r;
+  }
+  return i;
+}
+
 // Write to file f.
 // addr is a user virtual address.
 int
 filewrite(struct file *f, uint64 addr, int n)
 {
-  int r, ret = 0;
+  int ret = 0;
 
   if(f->writable == 0)
     return -1;
@@ -146,33 +184,8 @@ filewrite(struct file *f, uint64 addr, int n)
       return -1;
     ret = devsw[f->major].write(1, addr, n);
   } else if(f->type == FD_INODE){
-    // write a few blocks at a time to avoid exceeding
-    // the maximum log transaction size, including
-    // i-node, indirect block, allocation blocks,
-    // and 2 blocks of slop for non-aligned writes.
-    // this really belongs lower down, since writei()
-    // might be writing a device like the console.
-    int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
-    int i = 0;
-    while(i < n){
-      int n1 = n - i;
-      if(n1 > max)
-        n1 = max;
-
-      begin_op();
-      ilock(f->ip);
-      if ((r = writei(f->ip, 1, addr + i, f->off, n1)) > 0)
-        f->off += r;
-      iunlock(f->ip);
-      end_op();
-
-      if(r != n1){
-        // error from writei
-        break;
-      }
-      i += r;
-    }
-    ret = (i == n ? n : -1);
+    int nwrite = filewrite_inode(f->ip, 1, addr, n, &f->off);
+    ret = (nwrite == n ? n : -1);
   } else {
     panic("filewrite");
   }
